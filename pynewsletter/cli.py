@@ -22,22 +22,59 @@ def coroutine(f):
     return wrapper
 
 
+def display_link(link):
+    if link["title"].startswith("⋅"):
+        title = link["title"].replace("⋅", "").strip()
+        print(
+            Fore.RED
+            + "[EVENT]"
+            + Fore.BLUE
+            + f" {title} "
+            + Fore.GREEN
+            + f'{link["url"]}'
+        )
+    else:
+        print(Fore.BLUE + f'{link["title"]} ' + Fore.GREEN + f'{link["url"]}')
+
+
 async def fetch(session, url):
     async with session.get(url) as response:
         return await response.text()
 
 
 async def get_issue(session, issue, args):
+    kind = args[0] if args else None
+    section_map = {
+        "projects": re.compile(".*[pP]roject.*"),
+        "articles": re.compile(".*[aA]rticle.*"),
+        "discussions": re.compile(".*[dD]iscussion.*"),
+        "jobs": re.compile(".*[jJ]ob.*"),
+    }
     print(Fore.YELLOW + f"Fetching issue: #{issue}")
     html = await fetch(session, f"{BASE_URL}issues/{issue}")
     soup = BeautifulSoup(html, "html.parser")
-    projects = soup.find("h2", string=re.compile(".*[pP]roject.*"))
-    links = [
-        dict(title=link.text, url=link.attrs.get("href"))
-        for link in projects.find_all_next("a", href=re.compile(".*link.*"))
-    ]
+
+    if not kind:
+        section = soup.find(id="templateBody").find_all("h2")[0]
+        links_iter = section.find_all_previous("a", href=re.compile(".*link.*"))
+    else:
+        section = soup.find("h2", string=section_map[kind])
+        links_iter = section.find_all_next("a", href=re.compile(".*link.*"))
+
+    links = []
+    for link in links_iter:
+        next_section = link.find_previous("h2")
+
+        if kind and next_section is not None and next_section.text != section.text:
+            break
+
+        if "3399CC" not in link.attrs.get("style", ""):
+            continue
+
+        links.append({"title": link.text, "url": link.attrs.get("href")})
+
     for link in links:
-        print(Fore.BLUE + f'{link["title"]}' + "  " + Fore.GREEN + f'{link["url"]}')
+        display_link(link)
 
 
 async def get_latest_issue_number(session):
@@ -55,7 +92,7 @@ async def browse(args):
 
         while True:
             await get_issue(session=session, issue=latest_issue_number, args=args)
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             latest_issue_number -= 1
 
 
@@ -75,6 +112,10 @@ async def run(option, args):
         print(
             f'Invalid option: {option}. Available options: {",".join(_AVAILABLE_OPTIONS)}'
         )
+        sys.exit(1)
+
+    if len(args) > 1:
+        print("Invalid number of arguments")
         sys.exit(1)
 
     await _AVAILABLE_OPTIONS[option](args)
