@@ -12,6 +12,13 @@ from colorama import init, Fore
 init(autoreset=True)
 BASE_URL = "https://pycoders.com/"
 
+SECTION_MAP = {
+    "projects": re.compile(".*[pP]roject.*"),
+    "articles": re.compile(".*[aA]rticle.*"),
+    "discussions": re.compile(".*[dD]iscussion.*"),
+    "jobs": re.compile(".*[jJ]ob.*"),
+}
+
 
 def coroutine(f):
     @wraps(f)
@@ -42,30 +49,34 @@ async def fetch(session, url):
         return await response.text()
 
 
-async def get_issue(session, issue, args):
-    kind = args[0] if args else None
-    section_map = {
-        "projects": re.compile(".*[pP]roject.*"),
-        "articles": re.compile(".*[aA]rticle.*"),
-        "discussions": re.compile(".*[dD]iscussion.*"),
-        "jobs": re.compile(".*[jJ]ob.*"),
-    }
+async def fetch_issue(session, issue):
     print(Fore.YELLOW + f"Fetching issue: #{issue}")
     html = await fetch(session, f"{BASE_URL}issues/{issue}")
-    soup = BeautifulSoup(html, "html.parser")
+    return BeautifulSoup(html, "html.parser")
 
-    if not kind:
+
+async def parse_issue(soup, args):
+    kind = args[0] if args else "preview"
+    section_regexp = SECTION_MAP.get(kind, None)
+    section_name = kind.capitalize() if kind in SECTION_MAP else "Preview"
+
+    if section_regexp is not None:
+        section = soup.find("h2", string=section_regexp)
+        links_iter = section.find_all_next("a", href=re.compile(".*link.*"))
+    else:
         section = soup.find(id="templateBody").find_all("h2")[0]
         links_iter = section.find_all_previous("a", href=re.compile(".*link.*"))
-    else:
-        section = soup.find("h2", string=section_map[kind])
-        links_iter = section.find_all_next("a", href=re.compile(".*link.*"))
 
+    print(Fore.CYAN + f"[{section_name}]")
     links = []
     for link in links_iter:
         next_section = link.find_previous("h2")
 
-        if kind and next_section is not None and next_section.text != section.text:
+        if (
+            section_regexp
+            and next_section is not None
+            and next_section.text != section.text
+        ):
             break
 
         if "3399CC" not in link.attrs.get("style", ""):
@@ -87,20 +98,38 @@ async def get_latest_issue_number(session):
 
 async def browse(args):
     async with aiohttp.ClientSession() as session:
-        latest_issue_number = await get_latest_issue_number(session)
-        print(Fore.YELLOW + f"Found latest issue: {latest_issue_number}")
+        issue_number = await get_latest_issue_number(session)
+        print(Fore.YELLOW + f"Found latest issue: {issue_number}")
 
         while True:
-            await get_issue(session=session, issue=latest_issue_number, args=args)
+            soup = await fetch_issue(session=session, issue=issue_number)
+            await parse_issue(soup=soup, args=args)
             await asyncio.sleep(3)
-            latest_issue_number -= 1
+            issue_number -= 1
+
+
+async def download_issue(args):
+    if len(args) == 0:
+        print("Please provide issue number")
+        sys.exit(1)
+
+    issue_number = args[0]
+
+    async with aiohttp.ClientSession() as session:
+        soup = await fetch_issue(session=session, issue=issue_number)
+        await parse_issue(soup=soup, args=("preview",))
+        await parse_issue(soup=soup, args=("projects",))
+        await parse_issue(soup=soup, args=("articles",))
+        await parse_issue(soup=soup, args=("jobs",))
+        await parse_issue(soup=soup, args=("discussions",))
 
 
 class SearchOption:
     BROWSE = "browse"
+    ISSUE = "issue"
 
 
-_AVAILABLE_OPTIONS = {SearchOption.BROWSE: browse}
+_AVAILABLE_OPTIONS = {SearchOption.BROWSE: browse, SearchOption.ISSUE: download_issue}
 
 
 @click.command()
