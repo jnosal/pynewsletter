@@ -12,3 +12,9 @@ Download latest issue::
 
                 py-news issue 440
 
+
+Search in issues from latest to newest::
+
+                py-news search <phrase>
+
+

@@ -20,6 +20,11 @@ SECTION_MAP = {
 }
 
 
+def chunks(source, n):
+    for i in range(0, len(source), n):
+        yield source[i : i + n]
+
+
 def coroutine(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -30,18 +35,13 @@ def coroutine(f):
 
 
 def display_link(link):
-    if link["title"].startswith("⋅"):
-        title = link["title"].replace("⋅", "").strip()
-        print(
-            Fore.RED
-            + "[EVENT]"
-            + Fore.BLUE
-            + f" {title} "
-            + Fore.GREEN
-            + f'{link["url"]}'
-        )
+    title = link.text
+    url = link.attrs.get("href")
+    if title.startswith("⋅"):
+        title = title.replace("⋅", "").strip()
+        print(Fore.RED + "[EVENT]" + Fore.BLUE + f" {title} " + Fore.GREEN + f"{url}")
     else:
-        print(Fore.BLUE + f'{link["title"]} ' + Fore.GREEN + f'{link["url"]}')
+        print(Fore.BLUE + f"{title} " + Fore.GREEN + f"{url}")
 
 
 async def fetch(session, url):
@@ -50,7 +50,7 @@ async def fetch(session, url):
 
 
 async def fetch_issue(session, issue):
-    print(Fore.YELLOW + f"Fetching issue: #{issue}")
+    # print(Fore.YELLOW + f"Fetching issue: #{issue}")
     html = await fetch(session, f"{BASE_URL}issues/{issue}")
     return BeautifulSoup(html, "html.parser")
 
@@ -82,7 +82,7 @@ async def parse_issue(soup, args):
         if "3399CC" not in link.attrs.get("style", ""):
             continue
 
-        links.append({"title": link.text, "url": link.attrs.get("href")})
+        links.append(link)
 
     for link in links:
         display_link(link)
@@ -93,13 +93,14 @@ async def get_latest_issue_number(session):
     soup = BeautifulSoup(html, "html.parser")
     anchor = soup.find("a", string=re.compile(r".*latest.*"))
     href = anchor.attrs.get("href")
-    return int(href.split("/")[-1])
+    issue_number = int(href.split("/")[-1])
+    print(Fore.YELLOW + f"Found latest issue: {issue_number}")
+    return issue_number
 
 
 async def browse(args):
     async with aiohttp.ClientSession() as session:
         issue_number = await get_latest_issue_number(session)
-        print(Fore.YELLOW + f"Found latest issue: {issue_number}")
 
         while True:
             soup = await fetch_issue(session=session, issue=issue_number)
@@ -124,12 +125,47 @@ async def download_issue(args):
         await parse_issue(soup=soup, args=("discussions",))
 
 
+async def search_issue(session, issue_number, phrase):
+    soup = await fetch_issue(session=session, issue=issue_number)
+    links = soup.find_all(
+        "a",
+        href=re.compile(".*link.*"),
+        text=re.compile(f".*{phrase}.*", re.IGNORECASE),
+    )
+    for link in links:
+        display_link(link)
+
+
+async def search(args):
+    if len(args) == 0:
+        print("Please provide phrase to search")
+        sys.exit(1)
+
+    phrase = args[0]
+
+    async with aiohttp.ClientSession() as session:
+        issue_number = await get_latest_issue_number(session)
+        latest_issues = list(reversed(range(issue_number - 99, issue_number + 1)))
+        for batch in chunks(latest_issues, 10):
+            tasks = [
+                search_issue(session=session, issue_number=i, phrase=phrase)
+                for i in batch
+            ]
+            for f in asyncio.as_completed(tasks):
+                await f
+
+
 class SearchOption:
     BROWSE = "browse"
     ISSUE = "issue"
+    SEARCH = "search"
 
 
-_AVAILABLE_OPTIONS = {SearchOption.BROWSE: browse, SearchOption.ISSUE: download_issue}
+_AVAILABLE_OPTIONS = {
+    SearchOption.BROWSE: browse,
+    SearchOption.ISSUE: download_issue,
+    SearchOption.SEARCH: search,
+}
 
 
 @click.command()
