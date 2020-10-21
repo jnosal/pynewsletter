@@ -11,6 +11,7 @@ from colorama import init, Fore
 
 init(autoreset=True)
 BASE_URL = "https://pycoders.com/"
+OLDEST_ISSUE = 339
 
 SECTION_MAP = {
     "projects": re.compile(".*[pP]roject.*"),
@@ -79,7 +80,8 @@ async def parse_issue(soup, args):
         ):
             break
 
-        if "3399CC" not in link.attrs.get("style", ""):
+        styles = link.attrs.get("style", "")
+        if "3399CC" not in styles and "AAAAAA" not in styles:
             continue
 
         links.append(link)
@@ -115,6 +117,9 @@ async def download_issue(args):
         sys.exit(1)
 
     issue_number = args[0]
+    if int(issue_number) < OLDEST_ISSUE:
+        print(f"Issue number starts at {OLDEST_ISSUE}.")
+        sys.exit(1)
 
     async with aiohttp.ClientSession() as session:
         soup = await fetch_issue(session=session, issue=issue_number)
@@ -145,7 +150,7 @@ async def search(args):
 
     async with aiohttp.ClientSession() as session:
         issue_number = await get_latest_issue_number(session)
-        latest_issues = list(reversed(range(issue_number - 99, issue_number + 1)))
+        latest_issues = list(reversed(range(OLDEST_ISSUE, issue_number + 1)))
         for batch in chunks(latest_issues, 10):
             tasks = [
                 search_issue(session=session, issue_number=i, phrase=phrase)
