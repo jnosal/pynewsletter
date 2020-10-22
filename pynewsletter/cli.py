@@ -12,12 +12,16 @@ from colorama import init, Fore
 init(autoreset=True)
 BASE_URL = "https://pycoders.com/"
 OLDEST_ISSUE = 339
+LINK_COLOR = "3399CC"
+STATUS_SUCCESS = 200
+SLEEP_TIME = 3
+CHUNK_SIZE = 10
 
 SECTION_MAP = {
-    "projects": re.compile(".*[pP]roject.*"),
-    "articles": re.compile(".*[aA]rticle.*"),
-    "discussions": re.compile(".*[dD]iscussion.*"),
-    "jobs": re.compile(".*[jJ]ob.*"),
+    "projects": re.compile(".*project.*", re.IGNORECASE),
+    "articles": re.compile(".*article.*", re.IGNORECASE),
+    "discussions": re.compile(".*discussion.*", re.IGNORECASE),
+    "jobs": re.compile(".*job.*", re.IGNORECASE),
 }
 
 
@@ -47,13 +51,14 @@ def display_link(link):
 
 async def fetch(session, url):
     async with session.get(url) as response:
-        return await response.text()
+        html = await response.text()
+        return html, response.status
 
 
 async def fetch_issue(session, issue):
     # print(Fore.YELLOW + f"Fetching issue: #{issue}")
-    html = await fetch(session, f"{BASE_URL}issues/{issue}")
-    return BeautifulSoup(html, "html.parser")
+    html, status_code = await fetch(session, f"{BASE_URL}issues/{issue}")
+    return BeautifulSoup(html, "html.parser"), status_code
 
 
 async def parse_issue(soup, args):
@@ -63,14 +68,22 @@ async def parse_issue(soup, args):
 
     if section_regexp is not None:
         section = soup.find("h2", string=section_regexp)
-        links_iter = section.find_all_next("a", href=re.compile(".*link.*"))
+        links = (
+            []
+            if section is None
+            else section.find_all_next("a", href=re.compile(".*link.*"))
+        )
     else:
         section = soup.find(id="templateBody").find_all("h2")[0]
-        links_iter = section.find_all_previous("a", href=re.compile(".*link.*"))
+        links = (
+            []
+            if section is None
+            else section.find_all_previous("a", href=re.compile(".*link.*"))
+        )
 
     print(Fore.CYAN + f"[{section_name}]")
-    links = []
-    for link in links_iter:
+    results = []
+    for link in links:
         next_section = link.find_previous("h2")
 
         if (
@@ -81,17 +94,17 @@ async def parse_issue(soup, args):
             break
 
         styles = link.attrs.get("style", "")
-        if "3399CC" not in styles and "AAAAAA" not in styles:
+        if LINK_COLOR.lower() not in styles.lower():
             continue
 
-        links.append(link)
+        results.append(link)
 
-    for link in links:
+    for link in results:
         display_link(link)
 
 
 async def get_latest_issue_number(session):
-    html = await fetch(session, BASE_URL)
+    html, _ = await fetch(session, BASE_URL)
     soup = BeautifulSoup(html, "html.parser")
     anchor = soup.find("a", string=re.compile(r".*latest.*"))
     href = anchor.attrs.get("href")
@@ -105,24 +118,30 @@ async def browse(args):
         issue_number = await get_latest_issue_number(session)
 
         while True:
-            soup = await fetch_issue(session=session, issue=issue_number)
-            await parse_issue(soup=soup, args=args)
-            await asyncio.sleep(3)
+            soup, status_code = await fetch_issue(session=session, issue=issue_number)
+            if status_code == STATUS_SUCCESS:
+                await parse_issue(soup=soup, args=args)
+                await asyncio.sleep(SLEEP_TIME)
+
             issue_number -= 1
 
 
 async def download_issue(args):
     if len(args) == 0:
-        print("Please provide issue number")
+        print(Fore.RED + "Please provide issue number")
         sys.exit(1)
 
     issue_number = args[0]
     if int(issue_number) < OLDEST_ISSUE:
-        print(f"Issue number starts at {OLDEST_ISSUE}.")
+        print(Fore.RED + f"Issue number starts at {OLDEST_ISSUE}.")
         sys.exit(1)
 
     async with aiohttp.ClientSession() as session:
-        soup = await fetch_issue(session=session, issue=issue_number)
+        soup, status_code = await fetch_issue(session=session, issue=issue_number)
+        if status_code != STATUS_SUCCESS:
+            print(Fore.RED + f"Could not download issue: {issue_number}")
+            return
+
         await parse_issue(soup=soup, args=("preview",))
         await parse_issue(soup=soup, args=("projects",))
         await parse_issue(soup=soup, args=("articles",))
@@ -131,7 +150,9 @@ async def download_issue(args):
 
 
 async def search_issue(session, issue_number, phrase):
-    soup = await fetch_issue(session=session, issue=issue_number)
+    soup, status_code = await fetch_issue(session=session, issue=issue_number)
+    if status_code != STATUS_SUCCESS:
+        return
     links = soup.find_all(
         "a",
         href=re.compile(".*link.*"),
@@ -143,7 +164,7 @@ async def search_issue(session, issue_number, phrase):
 
 async def search(args):
     if len(args) == 0:
-        print("Please provide phrase to search")
+        print(Fore.RED + "Please provide phrase to search")
         sys.exit(1)
 
     phrase = args[0]
@@ -151,7 +172,7 @@ async def search(args):
     async with aiohttp.ClientSession() as session:
         issue_number = await get_latest_issue_number(session)
         latest_issues = list(reversed(range(OLDEST_ISSUE, issue_number + 1)))
-        for batch in chunks(latest_issues, 10):
+        for batch in chunks(latest_issues, CHUNK_SIZE):
             tasks = [
                 search_issue(session=session, issue_number=i, phrase=phrase)
                 for i in batch
