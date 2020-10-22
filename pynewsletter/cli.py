@@ -201,12 +201,13 @@ _AVAILABLE_OPTIONS = {
 async def run(option, args):
     if option not in _AVAILABLE_OPTIONS:
         print(
-            f'Invalid option: {option}. Available options: {",".join(_AVAILABLE_OPTIONS)}'
+            Fore.RED
+            + f'Invalid option: {option}. Available options: {",".join(_AVAILABLE_OPTIONS)}'
         )
         sys.exit(1)
 
     if len(args) > 1:
-        print("Invalid number of arguments")
+        print(Fore.RED + "Invalid number of arguments")
         sys.exit(1)
 
     await _AVAILABLE_OPTIONS[option](args)
