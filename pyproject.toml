@@ -21,7 +21,7 @@ black = "^20.8b1"
 flake8 = "^3.8.4"
 
 [tool.poetry.scripts]
-py-news = 'pynewsletter.cli:cli'
+py-news = 'pynewsletter.cli:run'
 
 
 [build-system]

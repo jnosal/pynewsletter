@@ -39,12 +39,6 @@ def coroutine(f):
     return wrapper
 
 
-@click.group()
-@coroutine
-async def cli():
-    pass
-
-
 def display_link(link):
     title = link.text
     url = link.attrs.get("href")
@@ -119,27 +113,26 @@ async def get_latest_issue_number(session):
     return issue_number
 
 
-@cli.command()
-@click.argument("section", type=str, default="preview")
-@coroutine
-async def browse(section):
+async def browse(args):
     async with aiohttp.ClientSession() as session:
         issue_number = await get_latest_issue_number(session)
 
         while True:
             soup, status_code = await fetch_issue(session=session, issue=issue_number)
             if status_code == STATUS_SUCCESS:
-                await parse_issue(soup=soup, args=(section,))
+                await parse_issue(soup=soup, args=args)
                 await asyncio.sleep(SLEEP_TIME)
 
             issue_number -= 1
 
 
-@cli.command()
-@click.argument("issue_number", type=int)
-@coroutine
-async def download_issue(issue_number):
-    if issue_number < OLDEST_ISSUE:
+async def download_issue(args):
+    if len(args) == 0:
+        print(Fore.RED + "Please provide issue number")
+        sys.exit(1)
+
+    issue_number = args[0]
+    if int(issue_number) < OLDEST_ISSUE:
         print(Fore.RED + f"Issue number starts at {OLDEST_ISSUE}.")
         sys.exit(1)
 
@@ -169,10 +162,13 @@ async def search_issue(session, issue_number, phrase):
         display_link(link)
 
 
-@cli.command()
-@click.argument("phrase", type=str)
-@coroutine
-async def search(phrase):
+async def search(args):
+    if len(args) == 0:
+        print(Fore.RED + "Please provide phrase to search")
+        sys.exit(1)
+
+    phrase = args[0]
+
     async with aiohttp.ClientSession() as session:
         issue_number = await get_latest_issue_number(session)
         latest_issues = list(reversed(range(OLDEST_ISSUE, issue_number + 1)))
@@ -183,3 +179,35 @@ async def search(phrase):
             ]
             for f in asyncio.as_completed(tasks):
                 await f
+
+
+class SearchOption:
+    BROWSE = "browse"
+    ISSUE = "issue"
+    SEARCH = "search"
+
+
+_AVAILABLE_OPTIONS = {
+    SearchOption.BROWSE: browse,
+    SearchOption.ISSUE: download_issue,
+    SearchOption.SEARCH: search,
+}
+
+
+@click.command()
+@click.argument("option", nargs=1)
+@click.argument("args", nargs=-1)
+@coroutine
+async def run(option, args):
+    if option not in _AVAILABLE_OPTIONS:
+        print(
+            Fore.RED
+            + f'Invalid option: {option}. Available options: {",".join(_AVAILABLE_OPTIONS)}'
+        )
+        sys.exit(1)
+
+    if len(args) > 1:
+        print(Fore.RED + "Invalid number of arguments")
+        sys.exit(1)
+
+    await _AVAILABLE_OPTIONS[option](args)
