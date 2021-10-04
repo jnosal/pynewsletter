@@ -55,6 +55,7 @@ async def fetch(session, url):
         return html, response.status
 
 
+# pycoders
 async def fetch_issue(session, issue):
     # print(Fore.YELLOW + f"Fetching issue: #{issue}")
     html, status_code = await fetch(session, f"{BASE_URL}issues/{issue}")
@@ -171,8 +172,8 @@ async def search(args):
 
     async with aiohttp.ClientSession() as session:
         issue_number = await get_latest_issue_number(session)
-        latest_issues = list(reversed(range(OLDEST_ISSUE, issue_number + 1)))
-        for batch in chunks(latest_issues, CHUNK_SIZE):
+        issues = list(reversed(range(OLDEST_ISSUE, issue_number + 1)))
+        for batch in chunks(issues, CHUNK_SIZE):
             tasks = [
                 search_issue(session=session, issue_number=i, phrase=phrase)
                 for i in batch
@@ -181,16 +182,88 @@ async def search(args):
                 await f
 
 
+async def browse_django(args):
+    async with aiohttp.ClientSession() as session:
+        html, status_code = await fetch(session, "https://django-news.com")
+        soup = BeautifulSoup(html, "html.parser")
+        issue_number = int(soup.select_one('.issue__pager__summary').text.split(' of ')[-1])
+
+        while True:
+            html, status_code = await fetch(session, "https://django-news.com/issues/{}".format(issue_number))
+            if status_code == STATUS_SUCCESS:
+                soup = BeautifulSoup(html, 'html.parser')
+                for link in soup.select('.item.item--issue.item--link .item__title a'):
+                    display_link(link)
+            await asyncio.sleep(SLEEP_TIME)
+            issue_number -= 1
+
+
+async def download_issue_django(args):
+    if len(args) == 0:
+        print(Fore.RED + "Please provide issue number")
+        sys.exit(1)
+
+    issue_number = args[0]
+    async with aiohttp.ClientSession() as session:
+        html, status_code = await fetch(session, "https://django-news.com/issues/{}".format(issue_number))
+        if status_code == STATUS_SUCCESS:
+            soup = BeautifulSoup(html, 'html.parser')
+            for link in soup.select('.item.item--issue.item--link .item__title a'):
+                display_link(link)
+
+
+async def search_django(args):
+    if len(args) == 0:
+        print(Fore.RED + "Please provide phrase to search")
+        sys.exit(1)
+
+    phrase = args[0]
+
+    async with aiohttp.ClientSession() as session:
+        html, status_code = await fetch(session, "https://django-news.com")
+        soup = BeautifulSoup(html, "html.parser")
+        issue_number = int(soup.select_one('.issue__pager__summary').text.split(' of ')[-1])
+        issues = list(reversed(range(1, issue_number + 1)))
+        for batch in chunks(issues, CHUNK_SIZE):
+            tasks = [
+                search_django_issue(session=session, issue_number=i, phrase=phrase)
+                for i in batch
+            ]
+            for f in asyncio.as_completed(tasks):
+                await f
+
+
+async def search_django_issue(session, issue_number, phrase):
+    html, status_code = await fetch(session, "https://django-news.com/issues/{}".format(issue_number))
+    if status_code != STATUS_SUCCESS:
+        return
+    soup = BeautifulSoup(html, 'html.parser')
+    links = soup.find_all(
+        "a",
+        href=re.compile(".*cur.*"),
+        text=re.compile(f".*{phrase}.*", re.IGNORECASE),
+    )
+    for link in links:
+        display_link(link)
+
+
 class SearchOption:
     BROWSE = "browse"
+    BROWSE_DJANGO = "browse-django"
     ISSUE = "issue"
+    ISSUE_DJANGO = "issue-django"
     SEARCH = "search"
+    SEARCH_DJANGO = "search-django"
 
 
 _AVAILABLE_OPTIONS = {
     SearchOption.BROWSE: browse,
+    SearchOption.BROWSE_DJANGO: browse_django,
     SearchOption.ISSUE: download_issue,
+    SearchOption.ISSUE_DJANGO: download_issue_django,
     SearchOption.SEARCH: search,
+    SearchOption.SEARCH_DJANGO: search_django
+
 }
 
 
